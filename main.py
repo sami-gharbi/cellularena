@@ -9,17 +9,20 @@ COSTS = {
     "ROOT": [1, 1, 1, 1],
 }
 
+organ_types = ["BASIC", "HARVESTER", "TENTACLE", "SPORER", "ROOT"]
+
+protein_types = ["A", "B", "C", "D"]
+
 class Game:
     def __init__(self, width, height):
         self._grid = [[" " for _ in range(width)] for _ in range(height)]
         self._entities = [[Entity() for _ in range(width)] for _ in range(height)]
         self._width = width
         self._height = height
-        self.our_organs = []
-        self.my_organisms = []
-        self.first_round = True
-        self.A_Entities=[]
-        self.Opp_Entities = []
+        self.my_organisms = {}
+        self.opp_organs = []
+        self.protein_entities={'A': [], 'B': [], 'C': [], 'D': []}
+        self.organ_map= {}
         self.resources = {'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
     def update_resources(self, my_a, my_b, my_c, my_d):
@@ -40,22 +43,23 @@ class Game:
         """Updates the grid with the provided entity and initializes organisms if necessary."""
         self._grid[entity.y][entity.x] = entity.type[0]
         self._entities[entity.y][entity.x] = entity
+
+        if entity.type in organ_types:
+            self.organ_map[entity.id] = entity
         
-        if entity.type=="A" :
-            self.A_Entities.append(entity)
+        if entity.type in protein_types:
+            self.protein_entities[entity.type].append(entity)
 
         if entity.owner==0:
-            self.Opp_Entities.append(entity)
+            self.opp_organs.append(entity)
 
-        # Track player's organisms and roots
+        # Track my organisms     
         if entity.owner == 1:
-            if entity.type == "ROOT" and self.first_round:
-                organism = Organism(entity)
-                organism._organ_ids.append(entity.id)
-                self.my_organisms.append(organism)
-            elif entity.id not in self.my_organisms[-1]._organ_ids:
-                self.my_organisms[-1].graph.append(entity)
-                self.my_organisms[-1]._organ_ids.append(entity.id)
+            my_organisms.setdefault(entity.organ_root_id, Organism()).update(entity)
+            # if entity.organ_root_id not in my_organisms:
+            #     my_organisms[entity.organ_root_id] = Organism()
+            # else:
+            #     my_organisms[entity.organ_root_id].update(entity)
 
     def get_explorable(self, entity):
         """Finds neighboring cells that can be explored or grown into."""
@@ -74,7 +78,7 @@ class Game:
         """Determines the best growth action for the organism based on explorable neighbors."""
         candidates = []
         success = True
-        for organ in organism.graph:
+        for organ in organism.organs:
             candidates += self.get_explorable(organ)
 
         #candidates.sort(key=lambda x: x[2])  # Sort by type for priority
@@ -107,7 +111,7 @@ class Game:
     def closest_intermediate_target(self,start_organ,target):
         x_distance =start_organ.x-target.x
         y_distance =start_organ.y-target.y
-        new_target = start_organ
+        new_target_x, new_target_y = start_organ.x, start_organ.y
         if min(abs(x_distance),abs(y_distance))== abs(y_distance):
             if y_distance >0:
                 new_target.y = new_target.y-1
@@ -118,21 +122,21 @@ class Game:
                 new_target.x = new_target.x-1
             elif x_distance <0:
                 new_target.x = new_target.x+1
-        return new_target
+        return self._entities[new_target_y][new_target_x]
 
     def get_action(self, organism):
         # try ROOT creation
         if organism.sporers and self.can_grow("ROOT"):
             # organism has sporers and there are enough resources to spore a new ROOT
             # get closest target to organism sporers   
-            start_organ,target,min_distance,max_distance= self.closest_target(organism.sporers,self.A_Entities)
+            start_organ,target,min_distance,max_distance= self.closest_target(organism.sporers,self.protein_entities["A"])
             # target is on the same line
             if start_organ.on_the_same_line(target): 
                 return f"SPORE {start_organ.id} {target.x} {target.y}"
 
         cell_type = "BASIC"
         # get closest target A Protein to organism organs (that are not sporers) 
-        start_organ,target,min_distance,max_distance= self.closest_target(organism.graph,self.A_Entities)
+        start_organ,target,min_distance,max_distance= self.closest_target(organism.organs,self.protein_entities["A"])
 
         # try SPORER creation
         if min_distance > self.resources['A']:
@@ -146,7 +150,7 @@ class Game:
             return  f"GROW {start_organ.id} {intermediate_target.x} {intermediate_target.y} {cell_type} {direction}"
 
         # get closest Enemy target to organism organs (that are not sporers) 
-        start_organ_to_enemy,enemy_target,min_distance_to_enemy,max_distance_to_enemy= self.closest_target(organism.graph,self.Opp_Entities)
+        start_organ_to_enemy,enemy_target,min_distance_to_enemy,max_distance_to_enemy= self.closest_target(organism.organs,self.opp_organs)
         
         # try TENTACLE creation
         if min_distance_to_enemy == 2 and start_organ_to_enemy.on_the_same_line(enemy_target) and self.can_grow("TENTACLE"):
@@ -176,30 +180,31 @@ class Game:
         return action_basic
             
 class Organism:
-    def __init__(self, root):
-        self.root = root
-        self.graph = [root]
-        self._organ_ids = []
-        self.closer_A_entities = []
+    def __init__(self):
+        self.root = None
+        self.organs = []
+        self.organ_ids = []
         self.sporers = []
 
     def update(self, entity):
         """Adds an entity to the organism if not already present."""
-        if entity.id not in self._organ_ids:
+        if entity.type == "ROOT"
+            self.root = entity
+        if entity.id not in self.organ_ids:
             if entity.type == "SPORER":
                 self.sporers.append(entity) 
             else:
-                self.graph.append(entity)
-            self._organ_ids.append(entity.id)
+                self.organs.append(entity)
+            self.organ_ids.append(entity.id)
             
 
 class Entity:
-    def __init__(self, organ_id=-1, entity_type="Z", x=-1, y=-1, owner=-1, organ_dir="D", organ_parent_id=-1, organ_root_id=-1):
-        self.id = organ_id
-        self.type = entity_type
+    def __init__(x=-1, y=-1, entity_type="Z", owner=-1, organ_id=-1, organ_dir="D", organ_parent_id=-1, organ_root_id=-1):
         self.x = x
         self.y = y
+        self.type = entity_type
         self.owner = owner
+        self.id = organ_id
         self.organ_dir = organ_dir
         self.organ_parent_id = organ_parent_id
         self.organ_root_id = organ_root_id
@@ -231,11 +236,12 @@ def debug(*args):
 
 # Initialization
 width, height = map(int, input().split())
-game = Game(width, height)
 
 # Main game loop
 while True:
     entity_count = int(input())
+    game = Game(width, height)
+
     for _ in range(entity_count):
         inputs = input().split()
         x, y = int(inputs[0]), int(inputs[1])
@@ -246,11 +252,9 @@ while True:
         organ_parent_id = int(inputs[6])
         organ_root_id = int(inputs[7])
 
-        entity = Entity(organ_id, entity_type, x, y, owner, organ_dir, organ_parent_id, organ_root_id)
+        entity = Entity(x, y, entity_type, owner, organ_id, organ_dir, organ_parent_id, organ_root_id)
         game.update(entity)
 
-
-    game.first_round = False
 
     # Player's resources
     my_a, my_b, my_c, my_d = map(int, input().split())
@@ -261,7 +265,6 @@ while True:
     for i in range(required_actions_count):
         organism = game.my_organisms[i]
         result = game.get_action(organism)
-        min_distance=1000
 
         if result:
             print(result)
