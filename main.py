@@ -1,12 +1,14 @@
 import sys
 import random
 
-COSTS={"BASIC":[1,0,0,0],
-"HARVESTER":[0,0,1,1],
-"TENTACLE":[0,1,1,0],
-"SPORER":[0,1,0,1],
-"ROOT":[1,1,1,1],
+COSTS = {
+    "BASIC": [1, 0, 0, 0],
+    "HARVESTER": [0, 0, 1, 1],
+    "TENTACLE": [0, 1, 1, 0],
+    "SPORER": [0, 1, 0, 1],
+    "ROOT": [1, 1, 1, 1],
 }
+
 class Game:
     def __init__(self, width, height):
         self._grid = [[" " for _ in range(width)] for _ in range(height)]
@@ -18,11 +20,16 @@ class Game:
         self.first_round = True
         self.A_Entities=[]
         self.Opp_Entities = []
-        self.resources=[]
+        self.resources = {'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
-    def sporer_is_possible(self):
-        if self.resources[1]>0 and self.resources[3]>0:
-            return True
+    def update_resources(self, my_a, my_b, my_c, my_d):
+        self.resources = {'A': my_a, 'B': my_b, 'C': my_c, 'D': my_d}
+
+    def can_grow(self, organ_type):
+        """Checks if there are enough resources for a specific organ type."""
+        costs = COSTS.get(organ_type)
+        return all(self.resources[res] >= costs[i] for i, res in enumerate("ABCD"))
+
 
     def is_valid(self, x, y):
         """Checks if a cell is within bounds and contains a valid entity type for exploration."""
@@ -63,29 +70,6 @@ class Game:
         
         return candidates
 
-    def get_actionV2(self, organism):
-        """Determines the best growth action for the organism based on explorable neighbors."""
-        candidates = []
-        for organ in organism.graph:
-            candidates += self.get_explorable(organ)
-
-        candidates.sort(key=lambda x: x[2])  # Sort by type for priority
-        min_distance = 1000
-        start_organ = None
-        target=None
-        for e in game.A_Entities:
-            #debug("Entity A:",e, organism.root.distance(e) )
-            for candidate[3] in candidates:
-                if candidate.distance(e) < min_distance:
-                    min_distance = candidate.distance(e)
-                    target = e
-                    start_organ = candidate
-
-        if candidates:
-            target_x, target_y, _, parent = target.x, target.y, _,start_organ
-            return target_x, target_y, parent
-        return None
-
     def get_basic(self, organism):
         """Determines the best growth action for the organism based on explorable neighbors."""
         candidates = []
@@ -101,63 +85,26 @@ class Game:
         else:
             return False,-1,-1,None
 
-    def closer_interest(self,organism,adverse_entities):
+    def closest_target(self,start_entities,target_entities):
         min_distance = 1000
+        max_distance = 0
         start_organ = None
         target=None
-        for organ in organism.graph:
+        for organ in start_entities:
             #debug("organ:",organ )
-            for adversary in adverse_entities:
-                my_distance =organ.distance(adversary)
-                if my_distance < min_distance:
-                    min_distance =  my_distance
-                    target = adversary
+            for target_entity in target_entities:
+                distance = organ.distance(target_entity)
+                if distance < min_distance:
+                    min_distance = distance
+                    target = target_entity
                     start_organ = organ
-        debug(min_distance)
-        return start_organ,target,min_distance
+                if distance > max_distance:
+                    max_distance = distance
+        #debug(min_distance)
+        return start_organ,target,min_distance,max_distance
         
-    def get_actionV3(self, organism):
 
-        # Fetch A entitites
-        start_organ,target,min_distance= self.closer_interest(organism,self.A_Entities)
-        cell_type = "BASIC"
-        
-        if min_distance == 1:
-            direction =  start_organ.direction(target)
-            cell_type="HARVESTER"
-            action_harvester = f"GROW {start_organ.id} {target.x} {target.y} {cell_type} {direction}"
-            return action_harvester
-        else:
-            if min_distance <2:
-                success,targetx, targety, start_organ = game.get_basic(organism)
-                if success:
-                    return  f"GROW {start_organ.id} {targetx} {targety} {cell_type}"
-                else:
-                    return "WAIT"
-            action_basic = f"GROW {start_organ.id} {target.x} {target.y} {cell_type}"
-            return action_basic
-
-    def get_actionV4(self, organism):
-
-        start_organ,target,min_distance= self.closer_interest(organism,self.Opp_Entities)
-        cell_type = "BASIC"
-        
-        if min_distance == 2:
-            direction =  start_organ.direction(target)
-            cell_type="TENTACLE"
-            action_harvester = f"GROW {start_organ.id} {target.x} {target.y} {cell_type} {direction}"
-            return action_harvester
-        else:
-            if min_distance <2:
-                success,targetx, targety, start_organ = game.get_basic(organism)
-                if success:
-                    return  f"GROW {start_organ.id} {targetx} {targety} {cell_type}"
-                else:
-                    return "WAIT"
-            action_basic = f"GROW {start_organ.id} {target.x} {target.y} {cell_type}"
-            return action_basic
-
-    def closest_target_to_A(self,start_organ,target):
+    def closest_intermediate_target(self,start_organ,target):
         x_distance =start_organ.x-target.x
         y_distance =start_organ.y-target.y
         new_target = start_organ
@@ -174,32 +121,59 @@ class Game:
         return new_target
 
     def get_action(self, organism):
-        if self.A_Entities:
-            pass
-        start_organ,target,min_distance= self.closer_interest(organism,self.A_Entities)
-        cell_type = "BASIC"
-        if self.sporer_is_possible():
-            new_target = self.closest_target_to_A(start_organ,target)
-            direction  = new_target.direction(target)
-            debug("SPORE",new_target)
-            return f"GROW {start_organ.id} {new_target.x} {new_target.y} SPORER {direction}"
+        # try ROOT creation
+        if organism.sporers and self.can_grow("ROOT"):
+            # organism has sporers and there are enough resources to spore a new ROOT
+            # get closest target to organism sporers   
+            start_organ,target,min_distance,max_distance= self.closest_target(organism.sporers,self.A_Entities)
+            # target is on the same line
+            if start_organ.on_the_same_line(target): 
+                return f"SPORE {start_organ.id} {target.x} {target.y}"
 
-        if start_organ.x == new_target.x or start_organ.y == new_target.y: 
-            return f"SPORE {start_organ.id} {target.x} {target.y}"
-        if min_distance == 2:
-            direction =  start_organ.direction(target)
+        cell_type = "BASIC"
+        # get closest target A Protein to organism organs (that are not sporers) 
+        start_organ,target,min_distance,max_distance= self.closest_target(organism.graph,self.A_Entities)
+
+        # try SPORER creation
+        if min_distance > self.resources['A']:
+            # target is far (not enough resources)
+            intermediate_target = self.closest_intermediate_target(start_organ,target)
+            direction  = intermediate_target.direction(target)
+            # grow sporer if possible
+            if intermediate_target.on_the_same_line(target):
+                if self.can_grow("SPORER"):
+                    cell_type = "SPORER"                
+            return  f"GROW {start_organ.id} {intermediate_target.x} {intermediate_target.y} {cell_type} {direction}"
+
+        # get closest Enemy target to organism organs (that are not sporers) 
+        start_organ_to_enemy,enemy_target,min_distance_to_enemy,max_distance_to_enemy= self.closest_target(organism.graph,self.Opp_Entities)
+        
+        # try TENTACLE creation
+        if min_distance_to_enemy == 2 and start_organ_to_enemy.on_the_same_line(enemy_target) and self.can_grow("TENTACLE"):
+            direction =  start_organ_to_enemy.direction(enemy_target)
             cell_type="TENTACLE"
-            action_harvester = f"GROW {start_organ.id} {target.x} {target.y} {cell_type} {direction}"
-            return action_harvester
-        else:
-            if min_distance <2:
-                success,targetx, targety, start_organ = game.get_basic(organism)
-                if success:
-                    return  f"GROW {start_organ.id} {targetx} {targety} {cell_type}"
-                else:
-                    return "WAIT"
-            action_basic = f"GROW {start_organ.id} {target.x} {target.y} {cell_type}"
-            return action_basic
+            return f"GROW {start_organ_to_enemy.id} {enemy_target.x} {enemy_target.y} {cell_type} {direction}"
+
+        # try HARVESTER creation
+        if min_distance == 2 and start_organ.on_the_same_line(target) and self.can_grow("HARVESTER"):
+            direction =  start_organ.direction(target)
+            cell_type="HARVESTER"
+            return f"GROW {start_organ.id} {target.x} {target.y} {cell_type} {direction}"
+
+        if min_distance == 1:
+            direction =  start_organ.direction(target)
+            return f"GROW {start_organ.id} {target.x} {target.y} {cell_type} {direction}"
+        
+        # try BASIC creation
+        if max_distance <=2:
+            success,targetx, targety, start_organ = self.get_basic(organism)
+            if success:
+                return  f"GROW {start_organ.id} {targetx} {targety} {cell_type}"
+            else:
+                return "WAIT"
+
+        action_basic = f"GROW {start_organ.id} {target.x} {target.y} {cell_type}"
+        return action_basic
             
 class Organism:
     def __init__(self, root):
@@ -207,20 +181,26 @@ class Organism:
         self.graph = [root]
         self._organ_ids = []
         self.closer_A_entities = []
+        self.sporers = []
 
     def update(self, entity):
         """Adds an entity to the organism if not already present."""
         if entity.id not in self._organ_ids:
-            self.graph.append(entity)
+            if entity.type == "SPORER":
+                self.sporers.append(entity) 
+            else:
+                self.graph.append(entity)
             self._organ_ids.append(entity.id)
+            
 
 class Entity:
-    def __init__(self, organ_id=-1, entity_type="Z", x=-1, y=-1, owner=-1, organ_parent_id=-1, organ_root_id=-1):
+    def __init__(self, organ_id=-1, entity_type="Z", x=-1, y=-1, owner=-1, organ_dir="D", organ_parent_id=-1, organ_root_id=-1):
         self.id = organ_id
         self.type = entity_type
         self.x = x
         self.y = y
         self.owner = owner
+        self.organ_dir = organ_dir
         self.organ_parent_id = organ_parent_id
         self.organ_root_id = organ_root_id
 
@@ -229,6 +209,9 @@ class Entity:
 
     def distance(self,e2):
         return abs(self.x-e2.x)+abs(self.y -e2.y)
+
+    def on_the_same_line(self,e):
+        return self.x == e.x or self.y == e.y
     
     def direction(self,e):
         if self.x == e.x:
@@ -241,6 +224,7 @@ class Entity:
                 return "W"
             else:
                 return "E"
+        return self.organ_dir
 
 def debug(*args):
     print(*args, file=sys.stderr, flush=True)
@@ -262,7 +246,7 @@ while True:
         organ_parent_id = int(inputs[6])
         organ_root_id = int(inputs[7])
 
-        entity = Entity(organ_id, entity_type, x, y, owner, organ_parent_id, organ_root_id)
+        entity = Entity(organ_id, entity_type, x, y, owner, organ_dir, organ_parent_id, organ_root_id)
         game.update(entity)
 
 
@@ -270,7 +254,7 @@ while True:
 
     # Player's resources
     my_a, my_b, my_c, my_d = map(int, input().split())
-    game.resources=  [my_a, my_b, my_c, my_d]
+    game.update_resources(my_a, my_b, my_c, my_d)
     opp_a, opp_b, opp_c, opp_d = map(int, input().split())
     required_actions_count = int(input())
 
